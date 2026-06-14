@@ -136,6 +136,11 @@ app.post("/webhook", async (req, res) => {
     content: m.content,
   }));
 
+  // Fallback: if history is empty, use current message
+  if (messages.length === 0) {
+    messages.push({ role: "user", content: text });
+  }
+
   // AI reply
   const system = `You are a warm, supportive after-hours chatbot for youths connected to Singapore Children's Society youth workers.
 
