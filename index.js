@@ -202,66 +202,65 @@ GATHERING INFO (do this naturally, not like a form):
   await sendTelegram(chatId, reply);
   await saveMessage(chatId, "assistant", reply);
 
-  if (history.length % 2 === 0) {
+  if ((history.length + 1) % 2 === 0) {
     generateSummary(chatId).catch(console.error);
   }
-});
 
-// Sessions
-app.get("/sessions", async (req, res) => {
-  if (req.headers["x-api-key"] !== API_KEY)
-    return res.status(401).json({ error: "Unauthorised" });
-  const conversations = await supabase("GET",
-    "conversations?select=*&order=last_message_time.desc.nullslast");
-  res.json(conversations);
-});
-
-// Messages
-app.get("/messages/:chatId", async (req, res) => {
-  if (req.headers["x-api-key"] !== API_KEY)
-    return res.status(401).json({ error: "Unauthorised" });
-  const msgs = await getMessages(req.params.chatId);
-  res.json(msgs);
-});
-
-// Worker reply
-app.post("/reply", async (req, res) => {
-  if (req.headers["x-api-key"] !== API_KEY)
-    return res.status(401).json({ error: "Unauthorised" });
-  const { chatId, message, workerName } = req.body;
-  if (!chatId || !message)
-    return res.status(400).json({ error: "Missing chatId or message" });
-  await sendTelegram(chatId,
-    `💬 *${workerName || "Your worker"}*: ${message}`);
-  await saveMessage(chatId, "assistant", `[Worker ${workerName}]: ${message}`);
-  res.json({ ok: true });
-});
-
-// Worker active toggle
-app.post("/worker-active", async (req, res) => {
-  if (req.headers["x-api-key"] !== API_KEY)
-    return res.status(401).json({ error: "Unauthorised" });
-  const { chatId, active } = req.body;
-  const workerActiveUntil = active
-    ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
-    : null;
-  await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-    worker_active: active,
-    worker_active_until: workerActiveUntil,
+  // Sessions
+  app.get("/sessions", async (req, res) => {
+    if (req.headers["x-api-key"] !== API_KEY)
+      return res.status(401).json({ error: "Unauthorised" });
+    const conversations = await supabase("GET",
+      "conversations?select=*&order=last_message_time.desc.nullslast");
+    res.json(conversations);
   });
-  res.json({ ok: true });
-});
-// Manual summary trigger for testing
-app.post("/trigger-summary", async (req, res) => {
-  const { chatId } = req.body;
-  try {
-    await generateSummary(chatId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
-app.get("/", (req, res) => res.json({ status: "ReachOut bot running ✅" }));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
+  // Messages
+  app.get("/messages/:chatId", async (req, res) => {
+    if (req.headers["x-api-key"] !== API_KEY)
+      return res.status(401).json({ error: "Unauthorised" });
+    const msgs = await getMessages(req.params.chatId);
+    res.json(msgs);
+  });
+
+  // Worker reply
+  app.post("/reply", async (req, res) => {
+    if (req.headers["x-api-key"] !== API_KEY)
+      return res.status(401).json({ error: "Unauthorised" });
+    const { chatId, message, workerName } = req.body;
+    if (!chatId || !message)
+      return res.status(400).json({ error: "Missing chatId or message" });
+    await sendTelegram(chatId,
+      `💬 *${workerName || "Your worker"}*: ${message}`);
+    await saveMessage(chatId, "assistant", `[Worker ${workerName}]: ${message}`);
+    res.json({ ok: true });
+  });
+
+  // Worker active toggle
+  app.post("/worker-active", async (req, res) => {
+    if (req.headers["x-api-key"] !== API_KEY)
+      return res.status(401).json({ error: "Unauthorised" });
+    const { chatId, active } = req.body;
+    const workerActiveUntil = active
+      ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      : null;
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+      worker_active: active,
+      worker_active_until: workerActiveUntil,
+    });
+    res.json({ ok: true });
+  });
+  // Manual summary trigger for testing
+  app.post("/trigger-summary", async (req, res) => {
+    const { chatId } = req.body;
+    try {
+      await generateSummary(chatId);
+      res.json({ ok: true });
+    } catch (e) {
+      res.json({ error: e.message });
+    }
+  });
+  app.get("/", (req, res) => res.json({ status: "ReachOut bot running ✅" }));
+
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
