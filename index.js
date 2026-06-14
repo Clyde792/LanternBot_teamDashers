@@ -91,7 +91,7 @@ async function callClaude(system, messages) {
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5",
-      max_tokens: 300,
+      max_tokens: 1000,
       system,
       messages,
     }),
@@ -127,6 +127,7 @@ Read this conversation and reply ONLY with valid JSON — no markdown, no explan
   );
 
   try {
+    console.log("Summary raw:", summary);
     const parsed = JSON.parse(summary);
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
       risk_level: parsed.risk_level,
