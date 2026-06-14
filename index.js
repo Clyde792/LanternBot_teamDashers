@@ -136,12 +136,12 @@ async function generateSummary(chatId) {
       setTimeout(async function () {
         await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open ReachOut app immediately.");
         console.log("Crisis alert 2 sent!");
-      }, 5 * 60 * 1000);
+      }, 30 * 1000);
 
       setTimeout(async function () {
         await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 10 minutes with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
         console.log("Crisis alert 3 sent!");
-      }, 10 * 60 * 1000);
+      }, 60 * 1000);
     }
   } catch (e) {
     console.error("Summary parse failed:", e);
