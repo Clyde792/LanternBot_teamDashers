@@ -77,6 +77,7 @@ async function callClaude(system, messages) {
     }),
   });
   const data = await res.json();
+  console.log("Claude response:", JSON.stringify(data));
   return data?.content?.[0]?.text || "I'm here with you.";
 }
 
