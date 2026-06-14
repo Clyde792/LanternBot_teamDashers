@@ -151,7 +151,7 @@ async function generateSummary(chatId) {
         try {
           const client = twilio(TWILIO_SID, TWILIO_TOKEN);
           await client.calls.create({
-            twiml: '<Response><Say voice="alice">This is an urgent alert from ReachOut, Singapore Children\'s Society. A youth in your care is in crisis and has been waiting for over a minute with no response. Please open the ReachOut app immediately to respond.</Say></Response>',
+            url: 'https://handler.twilio.com/twiml/EHec93d994881880928808eb3dedac7516',
             to: WORKER_PHONE,
             from: TWILIO_FROM,
           });
