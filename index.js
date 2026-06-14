@@ -133,6 +133,9 @@ Read this conversation and reply ONLY with valid JSON — no markdown, no explan
       summary: parsed.summary,
       suggested_action: parsed.suggested_action,
       crisis: parsed.crisis,
+      age: parsed.age,
+      school: parsed.school,
+      snapshot: parsed.snapshot,
     });
   } catch (e) {
     console.error("Summary parse failed:", e);
@@ -239,17 +242,21 @@ app.post("/worker-active", async (req, res) => {
     ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
     : null;
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-    risk_level: parsed.risk_level,
-    summary: parsed.summary,
-    suggested_action: parsed.suggested_action,
-    crisis: parsed.crisis,
-    age: parsed.age,
-    school: parsed.school,
-    snapshot: parsed.snapshot,
+    worker_active: active,
+    worker_active_until: workerActiveUntil,
   });
   res.json({ ok: true });
 });
-
+// Manual summary trigger for testing
+app.post("/trigger-summary", async (req, res) => {
+  const { chatId } = req.body;
+  try {
+    await generateSummary(chatId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
 app.get("/", (req, res) => res.json({ status: "ReachOut bot running ✅" }));
 
 const PORT = process.env.PORT || 3000;
