@@ -70,7 +70,7 @@ async function callClaude(system, messages) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-haiku-20240307",
+      model: "claude-haiku-4-5",
       max_tokens: 300,
       system,
       messages,
