@@ -128,7 +128,8 @@ Read this conversation and reply ONLY with valid JSON — no markdown, no explan
 
   try {
     console.log("Summary raw:", summary);
-    const parsed = JSON.parse(summary);
+    const clean = summary.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
       risk_level: parsed.risk_level,
       summary: parsed.summary,
