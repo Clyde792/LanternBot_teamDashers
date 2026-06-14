@@ -3,6 +3,8 @@ import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
+
+// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
@@ -16,8 +18,6 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const API_KEY = process.env.DASHBOARD_API_KEY || "reachout123";
-
-// ── Supabase helpers ──────────────────────────────────────────────────────────
 
 async function supabase(method, path, body) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -46,7 +46,6 @@ async function saveMessage(chatId, role, content) {
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
     last_message: content,
     last_message_time: new Date().toISOString(),
-    message_count: 99, // Supabase will handle real count via trigger if you add one
   });
 }
 
@@ -56,7 +55,15 @@ async function getMessages(chatId) {
   return Array.isArray(rows) ? rows : [];
 }
 
-// ── Telegram helper ───────────────────────────────────────────────────────────
+async function isWorkerActive(chatId) {
+  const rows = await supabase("GET",
+    `conversations?chat_id=eq.${chatId}&select=worker_active,worker_active_until`);
+  if (!Array.isArray(rows) || rows.length === 0) return false;
+  const conv = rows[0];
+  if (!conv.worker_active) return false;
+  if (conv.worker_active_until && new Date(conv.worker_active_until) < new Date()) return false;
+  return true;
+}
 
 async function sendTelegram(chatId, text) {
   await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -65,8 +72,6 @@ async function sendTelegram(chatId, text) {
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
   });
 }
-
-// ── Claude AI helpers ─────────────────────────────────────────────────────────
 
 async function callClaude(system, messages) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -121,8 +126,7 @@ Read this conversation and reply ONLY with valid JSON — no markdown, no explan
   }
 }
 
-// ── Webhook — receives messages from Telegram ─────────────────────────────────
-
+// Webhook
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const msg = req.body?.message;
@@ -132,23 +136,23 @@ app.post("/webhook", async (req, res) => {
   const username = msg.from?.username || msg.from?.first_name || "Youth";
   const text = msg.text;
 
-  // Save the incoming message
   await upsertConversation(chatId, username);
   await saveMessage(chatId, "user", text);
 
-  // Get full history for context
+  // Don't reply if worker is active
+  const workerActive = await isWorkerActive(chatId);
+  if (workerActive) return;
+
   const history = await getMessages(chatId);
   const messages = history.map(m => ({
     role: m.role === "user" ? "user" : "assistant",
     content: m.content,
   }));
 
-  // Fallback: if history is empty, use current message
   if (messages.length === 0) {
     messages.push({ role: "user", content: text });
   }
 
-  // AI reply
   const system = `You are a warm, supportive after-hours chatbot for youths connected to Singapore Children's Society youth workers.
 
 IMPORTANT — if the youth mentions suicide, self-harm, wanting to die, jumping, cutting, or any immediate danger, you MUST reply with ONLY this:
@@ -160,48 +164,57 @@ For all other messages, reply warmly in 2-3 short sentences. Listen, don't give 
   await sendTelegram(chatId, reply);
   await saveMessage(chatId, "assistant", reply);
 
-  // After every 5 messages, regenerate the AI summary for the worker dashboard
   if (history.length % 5 === 0) {
     generateSummary(chatId).catch(console.error);
   }
 });
 
-// ── Dashboard API — ReachOut app reads this ───────────────────────────────────
-
+// Sessions
 app.get("/sessions", async (req, res) => {
   if (req.headers["x-api-key"] !== API_KEY)
     return res.status(401).json({ error: "Unauthorised" });
-
   const conversations = await supabase("GET",
     "conversations?order=last_message_time.desc");
   res.json(conversations);
 });
 
+// Messages
 app.get("/messages/:chatId", async (req, res) => {
   if (req.headers["x-api-key"] !== API_KEY)
     return res.status(401).json({ error: "Unauthorised" });
-
   const msgs = await getMessages(req.params.chatId);
   res.json(msgs);
 });
 
-// ── Worker reply — sends a message back to the youth ─────────────────────────
-
+// Worker reply
 app.post("/reply", async (req, res) => {
   if (req.headers["x-api-key"] !== API_KEY)
     return res.status(401).json({ error: "Unauthorised" });
-
   const { chatId, message, workerName } = req.body;
   if (!chatId || !message)
     return res.status(400).json({ error: "Missing chatId or message" });
-
   await sendTelegram(chatId,
     `💬 *${workerName || "Your worker"}*: ${message}`);
   await saveMessage(chatId, "assistant", `[Worker ${workerName}]: ${message}`);
   res.json({ ok: true });
 });
 
+// Worker active toggle
+app.post("/worker-active", async (req, res) => {
+  if (req.headers["x-api-key"] !== API_KEY)
+    return res.status(401).json({ error: "Unauthorised" });
+  const { chatId, active } = req.body;
+  const workerActiveUntil = active
+    ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    : null;
+  await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+    worker_active: active,
+    worker_active_until: workerActiveUntil,
+  });
+  res.json({ ok: true });
+});
+
 app.get("/", (req, res) => res.json({ status: "ReachOut bot running ✅" }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Bot running on port ${PORT}`)); 
+app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
