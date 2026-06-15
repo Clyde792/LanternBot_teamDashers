@@ -368,6 +368,24 @@ app.post("/analyze-social", async function (req, res) {
   res.json(result);
 });
 
+app.post("/debug-instagram", async function (req, res) {
+  const { username } = req.body;
+  const raw = await fetch(
+    `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php`,
+    {
+      method: 'POST',
+      headers: {
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-host': 'instagram-scraper-stable-api.p.rapidapi.com',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `username_or_url=https://www.instagram.com/${encodeURIComponent(username)}/&amount=12`,
+    }
+  );
+  const data = await raw.json();
+  res.json(data);
+});
+
 app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
 
 const PORT = process.env.PORT || 3000;
