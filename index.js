@@ -189,17 +189,17 @@ async function analyzeInstagram(username) {
       return { error: 'Account not found or private' };
     }
 
-    const posts = data.data?.items || data.items || data.result?.items || [];
+    const posts = data.posts?.map(p => p.node) || data.data?.items || data.items || data.result?.items || [];
     if (posts.length === 0) {
       return { error: 'No posts found or account is private' };
     }
 
     const postData = posts.map(function (p) {
       return {
-        caption: p.caption?.text || p.caption || '',
-        timestamp: p.taken_at || p.timestamp,
-        likes: p.like_count || 0,
-        is_reel: p.media_type === 2,
+        caption: p.caption?.text || p.edge_media_to_caption?.edges?.[0]?.node?.text || p.caption || '',
+        timestamp: p.taken_at_timestamp || p.taken_at || p.timestamp,
+        likes: p.edge_liked_by?.count || p.like_count || 0,
+        is_reel: p.is_video || p.media_type === 2,
       };
     });
 
