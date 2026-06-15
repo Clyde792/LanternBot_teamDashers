@@ -114,7 +114,7 @@ async function generateSummary(chatId) {
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
 
-  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": \"one clear action\", \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation}";
+  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": [\"short action point 1 max 8 words\", \"short action point 2 max 8 words\", \"short action point 3 max 8 words\"], \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation}";
 
   const summary = await callClaude(summaryPrompt, [{ role: "user", content: transcript }], 1000);
 
@@ -126,7 +126,7 @@ async function generateSummary(chatId) {
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
       risk_level: parsed.risk_level,
       summary: Array.isArray(parsed.summary) ? parsed.summary.join('|||') : parsed.summary,
-      suggested_action: parsed.suggested_action,
+      suggested_action: Array.isArray(parsed.suggested_action) ? parsed.suggested_action.join('|||') : parsed.suggested_action,
       crisis: parsed.crisis,
       age: parsed.age,
       school: parsed.school,
