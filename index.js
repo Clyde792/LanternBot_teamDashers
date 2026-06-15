@@ -1,7 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
 import twilio from "twilio";
-import MyCasesScreen from './screens/MyCasesScreen';
 
 const app = express();
 app.use(express.json());
