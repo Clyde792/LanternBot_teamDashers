@@ -171,7 +171,7 @@ async function generateSummary(chatId) {
 async function analyzeInstagram(username) {
   try {
     const res = await fetch(
-      `https://instagram-scraper-stable-api.p.rapidapi.com/v1/get_user_posts_or_tagged_posts?username_or_url=${encodeURIComponent(username)}&amount=12`,
+      `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php?username_or_url=${encodeURIComponent(username)}&amount=12`,
       {
         method: 'GET',
         headers: {
