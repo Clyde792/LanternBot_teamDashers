@@ -427,6 +427,18 @@ app.post("/debug-instagram", async function (req, res) {
   res.json(data);
 });
 
+app.post("/translate", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: "Missing text" });
+  const translated = await callClaude(
+    "Translate the given text to English. Return ONLY the translated text, nothing else. If already in English, return as is.",
+    [{ role: "user", content: text }],
+    300
+  );
+  res.json({ translated });
+});
+
 app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
 
 const PORT = process.env.PORT || 3000;
