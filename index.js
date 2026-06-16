@@ -128,6 +128,11 @@ async function generateSummary(chatId) {
   const msgs = await getMessages(chatId);
   if (msgs.length < 2) return;
 
+  // Check crisis status FIRST before doing anything else
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis`);
+  const username = Array.isArray(convRows) ? convRows[0]?.username : 'Unknown';
+  const alreadyAlerting = Array.isArray(convRows) ? convRows[0]?.crisis === true : false;
+
   const transcript = msgs
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
@@ -145,7 +150,7 @@ async function generateSummary(chatId) {
       risk_level: parsed.risk_level,
       summary: Array.isArray(parsed.summary) ? parsed.summary.join('|||') : parsed.summary,
       suggested_action: Array.isArray(parsed.suggested_action) ? parsed.suggested_action.join('|||') : parsed.suggested_action,
-      crisis: parsed.crisis,
+      crisis: alreadyAlerting ? true : parsed.crisis, // never reset crisis to false automatically
       age: parsed.age,
       school: parsed.school,
       snapshot: parsed.snapshot,
@@ -154,10 +159,9 @@ async function generateSummary(chatId) {
       mood_score: parsed.mood_score,
     });
 
-    if (parsed.crisis || parsed.risk_level === 'high') {
-      const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username`);
-      const username = Array.isArray(convRows) ? convRows[0]?.username : 'Unknown';
+    console.log("alreadyAlerting:", alreadyAlerting, "parsed.crisis:", parsed.crisis);
 
+    if (!alreadyAlerting && (parsed.crisis || parsed.risk_level === 'high')) {
       await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - ReachOut\n\nYouth: @" + username + "\nRisk: " + (parsed.risk_level || '').toUpperCase() + "\n\nSummary: " + parsed.summary + "\n\nAction needed: " + parsed.suggested_action + "\n\nOpen ReachOut app to respond.");
       console.log("Crisis alert 1 sent!");
 
@@ -169,7 +173,6 @@ async function generateSummary(chatId) {
       setTimeout(async function () {
         await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
         console.log("Crisis alert 3 sent!");
-
         try {
           const client = twilio(TWILIO_SID, TWILIO_TOKEN);
           await client.calls.create({
@@ -182,6 +185,8 @@ async function generateSummary(chatId) {
           console.error("Call failed:", e.message);
         }
       }, 60 * 1000);
+    } else {
+      console.log("Crisis already flagged or not detected, skipping alert.");
     }
   } catch (e) {
     console.error("Summary parse failed:", e);
@@ -432,8 +437,8 @@ app.post("/translate", async function (req, res) {
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: "Missing text" });
   const translated = await callClaude(
-    "Translate the given text to English. Return ONLY the translated text, nothing else. If already in English, return as is.",
-    [{ role: "user", content: text }],
+    "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
+    [{ role: "user", content: "Translate this text exactly: " + text }],
     300
   );
   res.json({ translated });
