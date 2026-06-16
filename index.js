@@ -106,6 +106,24 @@ async function callClaude(system, messages, maxTokens) {
   return data?.content?.[0]?.text || "I'm here with you.";
 }
 
+async function detectAndTranslate(text, targetLanguage) {
+  const result = await callClaude(
+    "You are a translator. Translate the given text to " + targetLanguage + ". Return ONLY the translated text, nothing else. If the text is already in " + targetLanguage + ", return it as is.",
+    [{ role: "user", content: text }],
+    500
+  );
+  return result;
+}
+
+async function detectLanguage(text) {
+  const result = await callClaude(
+    "Detect the language of this text. Reply with ONLY the language name in English, nothing else. Examples: English, Malay, Mandarin, Tamil, Tagalog",
+    [{ role: "user", content: text }],
+    20
+  );
+  return result.trim();
+}
+
 async function generateSummary(chatId) {
   const msgs = await getMessages(chatId);
   if (msgs.length < 2) return;
@@ -248,6 +266,14 @@ app.post("/webhook", async function (req, res) {
   await upsertConversation(chatId, username, displayName);
   await saveMessage(chatId, "user", text);
 
+  // Detect and save youth's language
+  const detectedLang = await detectLanguage(text);
+  if (detectedLang && detectedLang !== 'English') {
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+      preferred_language: detectedLang,
+    });
+  }
+
   const now = new Date();
   const sgTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Singapore' }));
   const hour = sgTime.getHours();
@@ -327,7 +353,17 @@ app.post("/reply", async function (req, res) {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
   const { chatId, message, workerName } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: "Missing chatId or message" });
-  await sendTelegram(chatId, "Your worker " + (workerName || "Worker") + ": " + message);
+
+  // Translate to youth's preferred language
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=preferred_language`);
+  const preferredLang = Array.isArray(convRows) ? convRows[0]?.preferred_language : null;
+
+  let messageToSend = message;
+  if (preferredLang && preferredLang !== 'English') {
+    messageToSend = await detectAndTranslate(message, preferredLang);
+  }
+
+  await sendTelegram(chatId, "Your worker " + (workerName || "Worker") + ": " + messageToSend);
   await saveMessage(chatId, "assistant", "[Worker " + workerName + "]: " + message);
   res.json({ ok: true });
 });
