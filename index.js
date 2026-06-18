@@ -221,26 +221,29 @@ async function analyzeInstagram(username) {
       return { error: 'No posts found or account is private' };
     }
 
-    const postData = posts.map(function (p) {
+const postData = posts.map(function (p) {
       return {
         caption: (typeof p.caption === 'object' ? p.caption?.text : p.caption) || '',
+        visual_description: p.accessibility_caption || '',
         timestamp: p.taken_at || p.taken_at_timestamp || p.timestamp,
         likes: p.like_count || 0,
         is_reel: p.media_type === 2,
       };
     });
-
     const timestamps = postData.map(function (p) { return p.timestamp; }).filter(Boolean);
     const daysSinceLastPost = timestamps.length > 0
       ? Math.floor((Date.now() / 1000 - timestamps[0]) / 86400)
       : null;
 
-    const transcript = postData.map(function (p, i) {
-      return "Post " + (i + 1) + " (" + (p.is_reel ? 'Reel' : 'Photo') + "): \"" + p.caption + "\"";
-    }).join('\n');
+const transcript = postData.map(function (p, i) {
+      let line = "Post " + (i + 1) + " (" + (p.is_reel ? 'Reel' : 'Photo') + ")";
+      if (p.visual_description) line += "\nVisual: " + p.visual_description;
+      line += "\nCaption: \"" + p.caption + "\"";
+      return line;
+    }).join('\n\n');
 
     const analysis = await callClaude(
-      "You are a youth mental health analyst for Singapore Children's Society workers.\n\nIMPORTANT CONTEXT: Youth commonly use hyperbole, sarcasm, dark humor, and exaggerated language as a normal part of online communication (e.g. 'I'm literally dying', 'kill me now', 'this killed me 😂', 'worst day of my life', 'I want to disappear' used jokingly). Do NOT flag these as genuine distress unless supported by other contextual signals. Distinguish between stylistic exaggeration and authentic expressions of hopelessness, isolation, or crisis.\n\nWeigh PATTERNS more heavily than single posts. A single dark caption is weak evidence on its own. Look for: sustained negative tone across multiple posts, a real change in posting frequency or behaviour over time, genuine isolation themes appearing repeatedly, and hashtags or captions that lack the ironic or humorous framing typical of normal teen exaggeration.\n\nAnalyse these Instagram posts and return ONLY valid JSON no markdown:\n{\"caption_risk\": 0 to 100, \"hashtag_risk\": 0 to 100, \"frequency_risk\": 0 to 100, \"overall_risk\": 0 to 100, \"risk_level\": \"low or medium or high\", \"flags\": [\"list of specific concerning phrases or patterns, noting if pattern-based vs single-post\"], \"summary\": \"2 sentence analysis for the worker, noting if this is a pattern across posts or an isolated flag\"}\n\nBe conservative — only flag genuine concern, not normal teen expression, sarcasm, or dark humor. When uncertain whether something is genuine or stylistic, lean toward NOT flagging it, but note it in the summary as worth a human gut-check.",
+      "You are a youth mental health analyst for Singapore Children's Society workers.\n\nIMPORTANT CONTEXT: Youth commonly use hyperbole, sarcasm, dark humor, and exaggerated language as a normal part of online communication (e.g. 'I'm literally dying', 'kill me now', 'this killed me 😂', 'worst day of my life', 'I want to disappear' used jokingly). Do NOT flag these as genuine distress unless supported by other contextual signals. Distinguish between stylistic exaggeration and authentic expressions of hopelessness, isolation, or crisis.\n\nWeigh PATTERNS more heavily than single posts. A single dark caption is weak evidence on its own. Look for: sustained negative tone across multiple posts, a real change in posting frequency or behaviour over time, genuine isolation themes appearing repeatedly, and hashtags or captions that lack the ironic or humorous framing typical of normal teen exaggeration.\n\nEach post includes an automated visual description (from Instagram's accessibility system) alongside the caption. Use the visual description as supplementary context — e.g. consistently isolated/dark/empty scenes across posts can support a pattern-based concern, while normal social or outdoor scenes are reassuring. Visual descriptions are auto-generated and basic; weigh them lightly compared to caption content, and never flag based on visual description alone.\n\nAnalyse these Instagram posts (captions and visual descriptions) and return ONLY valid JSON no markdown:\n{\"caption_risk\": 0 to 100, \"hashtag_risk\": 0 to 100, \"frequency_risk\": 0 to 100, \"overall_risk\": 0 to 100, \"risk_level\": \"low or medium or high\", \"flags\": [\"list of specific concerning phrases or patterns, noting if pattern-based vs single-post\"], \"summary\": \"2 sentence analysis for the worker, noting if this is a pattern across posts or an isolated flag\"}\n\nBe conservative — only flag genuine concern, not normal teen expression, sarcasm, or dark humor. When uncertain whether something is genuine or stylistic, lean toward NOT flagging it, but note it in the summary as worth a human gut-check.",
       [{ role: "user", content: "Username: @" + username + "\nDays since last post: " + daysSinceLastPost + "\nRecent posts:\n" + transcript }],
       1000
     );
