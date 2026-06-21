@@ -382,7 +382,11 @@ ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep 
     checkAndAskSocialMedia(chatId, username).catch(console.error);
   }, 60 * 1000);
 
-  if ((history.length + 1) % 2 === 0) {
+  const convCheck = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=social_media_asked,instagram_username,other_social_media`);
+  const convCheckRow = Array.isArray(convCheck) ? convCheck[0] : null;
+  const awaitingSocialMediaReply = convCheckRow?.social_media_asked && !convCheckRow?.instagram_username && !convCheckRow?.other_social_media;
+
+  if ((history.length + 1) % 2 === 0 || awaitingSocialMediaReply) {
     generateSummary(chatId).catch(console.error);
   }
 });
