@@ -348,7 +348,8 @@ app.post("/webhook", async function (req, res) {
 
   // Detect and save youth's language
   const detectedLang = await detectLanguage(text);
-  if (detectedLang && detectedLang !== 'English') {
+  const isValidLanguage = detectedLang && detectedLang.length < 30 && !detectedLang.includes('.') && !detectedLang.includes(' please ');
+  if (isValidLanguage && detectedLang !== 'English') {
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
       preferred_language: detectedLang,
     });
