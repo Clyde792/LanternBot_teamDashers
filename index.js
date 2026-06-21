@@ -151,7 +151,61 @@ async function checkAndAskSocialMedia(chatId, username) {
     console.error("Social media ask error:", e);
   }
 }
+async function checkCrisisOnly(chatId, username, latestMessage) {
+  try {
+    const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=crisis,crisis_alerted_at`);
+    const convData = Array.isArray(convRows) ? convRows[0] : null;
 
+    let alreadyAlerting = convData?.crisis === true;
+    if (alreadyAlerting && convData?.crisis_alerted_at) {
+      const hoursSinceAlert = (Date.now() - new Date(convData.crisis_alerted_at).getTime()) / (1000 * 60 * 60);
+      if (hoursSinceAlert >= 24) {
+        alreadyAlerting = false;
+      }
+    }
+    if (alreadyAlerting) return; // already alerting and within window, skip the check entirely
+
+    const result = await callClaude(
+      "You are a crisis detector for a youth helpline. Read the message and reply with ONLY one word: CRISIS or SAFE. Reply CRISIS only if the message expresses suicidal intent, self-harm, wanting to die, or immediate danger to self. Otherwise reply SAFE.",
+      [{ role: "user", content: latestMessage }],
+      10
+    );
+
+    const isCrisis = result.trim().toUpperCase().includes("CRISIS");
+    if (!isCrisis) return;
+
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+      crisis: true,
+      crisis_alerted_at: new Date().toISOString(),
+    });
+
+    await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - ReachOut\n\nYouth: @" + username + "\n\nMessage: \"" + latestMessage + "\"\n\nOpen ReachOut app to respond immediately.");
+    console.log("Crisis alert 1 sent! (lightweight check)");
+
+    setTimeout(async function () {
+      await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open ReachOut app immediately.");
+      console.log("Crisis alert 2 sent!");
+    }, 30 * 1000);
+
+    setTimeout(async function () {
+      await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
+      console.log("Crisis alert 3 sent!");
+      try {
+        const client = twilio(TWILIO_SID, TWILIO_TOKEN);
+        await client.calls.create({
+          url: 'https://handler.twilio.com/twiml/EHec93d994881880928808eb3dedac7516',
+          to: WORKER_PHONE,
+          from: TWILIO_FROM,
+        });
+        console.log("Phone call made to worker!");
+      } catch (e) {
+        console.error("Call failed:", e.message);
+      }
+    }, 60 * 1000);
+  } catch (e) {
+    console.error("Crisis check error:", e);
+  }
+}
 async function generateSummary(chatId) {
   const msgs = await getMessages(chatId);
   if (msgs.length < 2) return;
@@ -204,38 +258,7 @@ async function generateSummary(chatId) {
 
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, updatePayload);
 
-    console.log("alreadyAlerting:", alreadyAlerting, "parsed.crisis:", parsed.crisis);
-
-    if (!alreadyAlerting && (parsed.crisis || parsed.risk_level === 'high')) {
-      await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-        crisis_alerted_at: new Date().toISOString(),
-      });
-      await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - ReachOut\n\nYouth: @" + username + "\nRisk: " + (parsed.risk_level || '').toUpperCase() + "\n\nSummary: " + parsed.summary + "\n\nAction needed: " + parsed.suggested_action + "\n\nOpen ReachOut app to respond.");
-      console.log("Crisis alert 1 sent!");
-
-      setTimeout(async function () {
-        await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open ReachOut app immediately.");
-        console.log("Crisis alert 2 sent!");
-      }, 30 * 1000);
-
-      setTimeout(async function () {
-        await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
-        console.log("Crisis alert 3 sent!");
-        try {
-          const client = twilio(TWILIO_SID, TWILIO_TOKEN);
-          await client.calls.create({
-            url: 'https://handler.twilio.com/twiml/EHec93d994881880928808eb3dedac7516',
-            to: WORKER_PHONE,
-            from: TWILIO_FROM,
-          });
-          console.log("Phone call made to worker!");
-        } catch (e) {
-          console.error("Call failed:", e.message);
-        }
-      }, 60 * 1000);
-    } else {
-      console.log("Crisis already flagged or not detected, skipping alert.");
-    }
+    console.log("Summary saved. High-risk alerting is now handled separately by checkCrisisOnly on every message.");
   } catch (e) {
     console.error("Summary parse failed:", e);
   }
@@ -392,6 +415,9 @@ ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep 
   setTimeout(function () {
     checkAndAskSocialMedia(chatId, username).catch(console.error);
   }, 60 * 1000);
+
+  // Lightweight crisis check - runs on EVERY message, cheap, never skipped
+  checkCrisisOnly(chatId, username, text).catch(console.error);
 
   const convCheck = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=social_media_asked,instagram_username,other_social_media`);
   const convCheckRow = Array.isArray(convCheck) ? convCheck[0] : null;
