@@ -124,6 +124,34 @@ async function detectLanguage(text) {
   return result.trim();
 }
 
+async function checkAndAskSocialMedia(chatId, username) {
+  try {
+    const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=last_message_time,social_media_asked,instagram_username`);
+    const conv = Array.isArray(convRows) ? convRows[0] : null;
+    if (!conv) return;
+    if (conv.social_media_asked || conv.instagram_username) return;
+
+    const lastMsgTime = new Date(conv.last_message_time).getTime();
+    const now = Date.now();
+    // Only ask if no new message has come in during the last 60 seconds
+    if (now - lastMsgTime < 58000) return;
+
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+      social_media_asked: true,
+    });
+
+    const followUp = await callClaude(
+      "You are Buddy, a warm friendly companion chatting with a youth. Casually and naturally ask if they have Instagram, TikTok, or any social media they're active on, the way a friend would ask to follow them. Keep it short, 1-2 sentences, casual tone, no pressure to answer. Do not mention monitoring, checking, or anything official.",
+      [{ role: "user", content: "Ask them casually about their social media." }],
+      100
+    );
+    await sendTelegram(chatId, followUp);
+    await saveMessage(chatId, "assistant", followUp);
+  } catch (e) {
+    console.error("Social media ask error:", e);
+  }
+}
+
 async function generateSummary(chatId) {
   const msgs = await getMessages(chatId);
   if (msgs.length < 2) return;
@@ -137,7 +165,7 @@ async function generateSummary(chatId) {
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
 
-  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": [\"short action point 1 max 8 words\", \"short action point 2 max 8 words\", \"short action point 3 max 8 words\"], \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation}";
+  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": [\"short action point 1 max 8 words\", \"short action point 2 max 8 words\", \"short action point 3 max 8 words\"], \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"instagram_username\": \"instagram username if the youth mentioned it during the conversation, otherwise null\", \"other_social_media\": \"any other social media platform and username mentioned, e.g. TikTok or Snapchat handle, otherwise null\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation}";
 
   const summary = await callClaude(summaryPrompt, [{ role: "user", content: transcript }], 1000);
 
@@ -146,18 +174,27 @@ async function generateSummary(chatId) {
     const clean = summary.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
-    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+    const updatePayload = {
       risk_level: parsed.risk_level,
       summary: Array.isArray(parsed.summary) ? parsed.summary.join('|||') : parsed.summary,
       suggested_action: Array.isArray(parsed.suggested_action) ? parsed.suggested_action.join('|||') : parsed.suggested_action,
-      crisis: alreadyAlerting ? true : parsed.crisis, // never reset crisis to false automatically
+      crisis: alreadyAlerting ? true : parsed.crisis,
       age: parsed.age,
       school: parsed.school,
       snapshot: parsed.snapshot,
       trust_level: parsed.trust_level,
       engagement_level: parsed.engagement_level,
       mood_score: parsed.mood_score,
-    });
+    };
+
+    if (parsed.instagram_username) {
+      updatePayload.instagram_username = parsed.instagram_username;
+    }
+    if (parsed.other_social_media) {
+      updatePayload.other_social_media = parsed.other_social_media;
+    }
+
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, updatePayload);
 
     console.log("alreadyAlerting:", alreadyAlerting, "parsed.crisis:", parsed.crisis);
 
@@ -221,7 +258,7 @@ async function analyzeInstagram(username) {
       return { error: 'No posts found or account is private' };
     }
 
-const postData = posts.map(function (p) {
+    const postData = posts.map(function (p) {
       return {
         caption: (typeof p.caption === 'object' ? p.caption?.text : p.caption) || '',
         visual_description: p.accessibility_caption || '',
@@ -230,12 +267,13 @@ const postData = posts.map(function (p) {
         is_reel: p.media_type === 2,
       };
     });
+
     const timestamps = postData.map(function (p) { return p.timestamp; }).filter(Boolean);
     const daysSinceLastPost = timestamps.length > 0
       ? Math.floor((Date.now() / 1000 - timestamps[0]) / 86400)
       : null;
 
-const transcript = postData.map(function (p, i) {
+    const transcript = postData.map(function (p, i) {
       let line = "Post " + (i + 1) + " (" + (p.is_reel ? 'Reel' : 'Photo') + ")";
       if (p.visual_description) line += "\nVisual: " + p.visual_description;
       line += "\nCaption: \"" + p.caption + "\"";
@@ -243,7 +281,7 @@ const transcript = postData.map(function (p, i) {
     }).join('\n\n');
 
     const analysis = await callClaude(
-      "You are a youth mental health analyst for Singapore Children's Society workers.\n\nIMPORTANT CONTEXT: Youth commonly use hyperbole, sarcasm, dark humor, and exaggerated language as a normal part of online communication (e.g. 'I'm literally dying', 'kill me now', 'this killed me 😂', 'worst day of my life', 'I want to disappear' used jokingly). Do NOT flag these as genuine distress unless supported by other contextual signals. Distinguish between stylistic exaggeration and authentic expressions of hopelessness, isolation, or crisis.\n\nWeigh PATTERNS more heavily than single posts. A single dark caption is weak evidence on its own. Look for: sustained negative tone across multiple posts, a real change in posting frequency or behaviour over time, genuine isolation themes appearing repeatedly, and hashtags or captions that lack the ironic or humorous framing typical of normal teen exaggeration.\n\nEach post includes an automated visual description (from Instagram's accessibility system) alongside the caption. Use the visual description as supplementary context — e.g. consistently isolated/dark/empty scenes across posts can support a pattern-based concern, while normal social or outdoor scenes are reassuring. Visual descriptions are auto-generated and basic; weigh them lightly compared to caption content, and never flag based on visual description alone.\n\nAnalyse these Instagram posts (captions and visual descriptions) and return ONLY valid JSON no markdown:\n{\"caption_risk\": 0 to 100, \"hashtag_risk\": 0 to 100, \"frequency_risk\": 0 to 100, \"overall_risk\": 0 to 100, \"risk_level\": \"low or medium or high\", \"flags\": [\"list of specific concerning phrases or patterns, noting if pattern-based vs single-post\"], \"summary\": \"2 sentence analysis for the worker, noting if this is a pattern across posts or an isolated flag\"}\n\nBe conservative — only flag genuine concern, not normal teen expression, sarcasm, or dark humor. When uncertain whether something is genuine or stylistic, lean toward NOT flagging it, but note it in the summary as worth a human gut-check.",
+      "You are a youth mental health analyst for Singapore Children's Society workers.\n\nIMPORTANT CONTEXT: Youth commonly use hyperbole, sarcasm, dark humor, and exaggerated language as a normal part of online communication (e.g. 'I'm literally dying', 'kill me now', 'this killed me 😂', 'worst day of my life', 'I want to disappear' used jokingly). Do NOT flag these as genuine distress unless supported by other contextual signals. Distinguish between stylistic exaggeration and authentic expressions of hopelessness, isolation, or crisis.\n\nWeigh PATTERNS more heavily than single posts. A single dark caption is weak evidence on its own. Look for: sustained negative tone across multiple posts, a real change in posting frequency or behaviour over time, genuine isolation themes appearing repeatedly, and hashtags or captions that lack the ironic or humorous framing typical of normal teen exaggeration.\n\nEach post includes an automated visual description (from Instagram's accessibility system) alongside the caption. Use the visual description as supplementary context only — e.g. consistently isolated, dark, or empty scenes across multiple posts can support a pattern-based concern, while normal social or outdoor scenes are reassuring. Visual descriptions are auto-generated and basic; weigh them lightly compared to caption content, and never flag based on visual description alone.\n\nAnalyse these Instagram posts (captions and visual descriptions) and return ONLY valid JSON no markdown:\n{\"caption_risk\": 0 to 100, \"hashtag_risk\": 0 to 100, \"frequency_risk\": 0 to 100, \"overall_risk\": 0 to 100, \"risk_level\": \"low or medium or high\", \"flags\": [\"list of specific concerning phrases or patterns, noting if pattern-based vs single-post\"], \"summary\": \"2 sentence analysis for the worker, noting if this is a pattern across posts or an isolated flag\"}\n\nBe conservative — only flag genuine concern, not normal teen expression, sarcasm, or dark humor. When uncertain whether something is genuine or stylistic, lean toward NOT flagging it, but note it in the summary as worth a human gut-check.",
       [{ role: "user", content: "Username: @" + username + "\nDays since last post: " + daysSinceLastPost + "\nRecent posts:\n" + transcript }],
       1000
     );
@@ -301,18 +339,18 @@ app.post("/webhook", async function (req, res) {
   }
 
   const system = `You are Buddy, ReachOut's after-hours chat companion for Singapore Children's Society (SCS). You are NOT a counsellor, therapist, or mental health professional. You are a friendly, caring presence that keeps youths company after hours and passes everything to their real worker.
-
+ 
 YOUR ONLY JOBS:
 1. Be a genuine, warm friend who listens
 2. Keep the youth company so they don't feel alone after hours
 3. Let them know their worker will be updated and will follow up
-4. Collect casual info (name, age, school, hobbies) naturally through friendly conversation
+4. Collect casual info (name, age, school, hobbies, social media handles) naturally through friendly conversation
 5. Escalate crisis immediately — nothing else
-
+ 
 CRISIS RULE (non-negotiable):
 If the youth mentions suicide, self-harm, wanting to die, cutting, jumping, or any immediate danger, reply ONLY with:
 "I'm really worried about you right now 💙 Please call or text SOS at 1800-221-4444 — they're there 24/7. Your worker will also be notified straight away. You don't have to go through this alone."
-
+ 
 HOW TO TALK:
 - Sound like a warm, genuine friend — not a professional
 - Short replies, 2–3 sentences max
@@ -323,22 +361,26 @@ HOW TO TALK:
 - React naturally — "oh no that's rough 😞", "wait seriously?", "aw that's so annoying"
 - End with one simple, friendly question
 - If they share something difficult, acknowledge it warmly and remind them their worker will hear about it
-
+ 
 WHAT TO SAY INSTEAD OF ADVICE:
 - "That sounds really rough 😞 Your worker's gonna want to hear about this."
 - "Ugh that's a lot to carry. I'm glad you told me."
 - "Honestly that sounds so tough. You okay for now?"
 - "I'm here. Your worker will check in with you soon too 💙"
-
+ 
 GATHERING INFO (casually, one at a time):
-- Slip in friendly questions about name, age, school, hobbies when it feels natural
-- Never make it feel like a form or interview
-
+- Slip in friendly questions about name, age, school, hobbies, and social media (Instagram, TikTok etc) when it feels natural — like a friend would ask to follow them
+- Never make it feel like a form, interview, or official check
+ 
 ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep them company, and make sure they know a real human (their worker) will follow up.`;
 
   const reply = await callClaude(system, messages, 300);
   await sendTelegram(chatId, reply);
   await saveMessage(chatId, "assistant", reply);
+
+  setTimeout(function () {
+    checkAndAskSocialMedia(chatId, username).catch(console.error);
+  }, 60 * 1000);
 
   if ((history.length + 1) % 2 === 0) {
     generateSummary(chatId).catch(console.error);
@@ -362,7 +404,6 @@ app.post("/reply", async function (req, res) {
   const { chatId, message, workerName } = req.body;
   if (!chatId || !message) return res.status(400).json({ error: "Missing chatId or message" });
 
-  // Translate to youth's preferred language
   const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=preferred_language`);
   const preferredLang = Array.isArray(convRows) ? convRows[0]?.preferred_language : null;
 
