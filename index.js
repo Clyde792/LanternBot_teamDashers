@@ -157,10 +157,17 @@ async function generateSummary(chatId) {
   if (msgs.length < 2) return;
 
   // Check crisis status FIRST before doing anything else
-  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis`);
-  const username = Array.isArray(convRows) ? convRows[0]?.username : 'Unknown';
-  const alreadyAlerting = Array.isArray(convRows) ? convRows[0]?.crisis === true : false;
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis,crisis_alerted_at`);
+  const convData = Array.isArray(convRows) ? convRows[0] : null;
+  const username = convData?.username || 'Unknown';
 
+  let alreadyAlerting = convData?.crisis === true;
+  if (alreadyAlerting && convData?.crisis_alerted_at) {
+    const hoursSinceAlert = (Date.now() - new Date(convData.crisis_alerted_at).getTime()) / (1000 * 60 * 60);
+    if (hoursSinceAlert >= 24) {
+      alreadyAlerting = false; // 24 hours passed, allow a fresh alert
+    }
+  }
   const transcript = msgs
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
@@ -178,7 +185,7 @@ async function generateSummary(chatId) {
       risk_level: parsed.risk_level,
       summary: Array.isArray(parsed.summary) ? parsed.summary.join('|||') : parsed.summary,
       suggested_action: Array.isArray(parsed.suggested_action) ? parsed.suggested_action.join('|||') : parsed.suggested_action,
-      crisis: alreadyAlerting ? true : parsed.crisis,
+      crisis: alreadyAlerting ? true : (parsed.crisis || parsed.risk_level === 'high'),
       age: parsed.age,
       school: parsed.school,
       snapshot: parsed.snapshot,
@@ -199,6 +206,9 @@ async function generateSummary(chatId) {
     console.log("alreadyAlerting:", alreadyAlerting, "parsed.crisis:", parsed.crisis);
 
     if (!alreadyAlerting && (parsed.crisis || parsed.risk_level === 'high')) {
+      await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+        crisis_alerted_at: new Date().toISOString(),
+      });
       await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - ReachOut\n\nYouth: @" + username + "\nRisk: " + (parsed.risk_level || '').toUpperCase() + "\n\nSummary: " + parsed.summary + "\n\nAction needed: " + parsed.suggested_action + "\n\nOpen ReachOut app to respond.");
       console.log("Crisis alert 1 sent!");
 
@@ -418,81 +428,87 @@ app.post("/reply", async function (req, res) {
 
   await sendTelegram(chatId, "Your worker " + (workerName || "Worker") + ": " + messageToSend);
   await saveMessage(chatId, "assistant", "[Worker " + workerName + "]: " + message);
-  res.json({ ok: true });
-});
 
-app.post("/worker-active", async function (req, res) {
-  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-  const { chatId, active } = req.body;
-  const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
+  // Worker has actively responded - clear crisis suppression so a future episode can re-alert
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-    worker_active: active,
-    worker_active_until: workerActiveUntil,
+    crisis: false,
+    crisis_alerted_at: null,
   });
+
   res.json({ ok: true });
-});
 
-app.post("/trigger-summary", async function (req, res) {
-  const { chatId } = req.body;
-  try {
-    await generateSummary(chatId);
-    res.json({ ok: true });
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
-
-app.post("/analyze-social", async function (req, res) {
-  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-  const { chatId, instagram_username } = req.body;
-  if (!instagram_username) return res.status(400).json({ error: "Missing instagram_username" });
-
-  console.log("Analysing Instagram:", instagram_username);
-  const result = await analyzeInstagram(instagram_username);
-
-  if (!result.error && chatId) {
+  app.post("/worker-active", async function (req, res) {
+    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+    const { chatId, active } = req.body;
+    const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-      instagram_username,
-      social_risk_score: result.overall_risk,
-      social_risk_summary: result.summary,
-      social_last_checked: new Date().toISOString(),
+      worker_active: active,
+      worker_active_until: workerActiveUntil,
     });
-  }
+    res.json({ ok: true });
+  });
 
-  res.json(result);
-});
-
-app.post("/debug-instagram", async function (req, res) {
-  const { username } = req.body;
-  const raw = await fetch(
-    `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php`,
-    {
-      method: 'POST',
-      headers: {
-        'x-rapidapi-key': RAPIDAPI_KEY,
-        'x-rapidapi-host': 'instagram-scraper-stable-api.p.rapidapi.com',
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: `username_or_url=https://www.instagram.com/${encodeURIComponent(username)}/&amount=12`,
+  app.post("/trigger-summary", async function (req, res) {
+    const { chatId } = req.body;
+    try {
+      await generateSummary(chatId);
+      res.json({ ok: true });
+    } catch (e) {
+      res.json({ error: e.message });
     }
-  );
-  const data = await raw.json();
-  res.json(data);
-});
+  });
 
-app.post("/translate", async function (req, res) {
-  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-  const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Missing text" });
-  const translated = await callClaude(
-    "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
-    [{ role: "user", content: "Translate this text exactly: " + text }],
-    300
-  );
-  res.json({ translated });
-});
+  app.post("/analyze-social", async function (req, res) {
+    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+    const { chatId, instagram_username } = req.body;
+    if (!instagram_username) return res.status(400).json({ error: "Missing instagram_username" });
 
-app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
+    console.log("Analysing Instagram:", instagram_username);
+    const result = await analyzeInstagram(instagram_username);
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, function () { console.log("Bot running on port " + PORT); });
+    if (!result.error && chatId) {
+      await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+        instagram_username,
+        social_risk_score: result.overall_risk,
+        social_risk_summary: result.summary,
+        social_last_checked: new Date().toISOString(),
+      });
+    }
+
+    res.json(result);
+  });
+
+  app.post("/debug-instagram", async function (req, res) {
+    const { username } = req.body;
+    const raw = await fetch(
+      `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php`,
+      {
+        method: 'POST',
+        headers: {
+          'x-rapidapi-key': RAPIDAPI_KEY,
+          'x-rapidapi-host': 'instagram-scraper-stable-api.p.rapidapi.com',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: `username_or_url=https://www.instagram.com/${encodeURIComponent(username)}/&amount=12`,
+      }
+    );
+    const data = await raw.json();
+    res.json(data);
+  });
+
+  app.post("/translate", async function (req, res) {
+    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Missing text" });
+    const translated = await callClaude(
+      "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
+      [{ role: "user", content: "Translate this text exactly: " + text }],
+      300
+    );
+    res.json({ translated });
+  });
+
+  app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
+
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, function () { console.log("Bot running on port " + PORT); });
