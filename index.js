@@ -183,11 +183,23 @@ async function checkCrisisOnly(chatId, username, latestMessage) {
     console.log("Crisis alert 1 sent! (lightweight check)");
 
     setTimeout(async function () {
+      const checkRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=crisis`);
+      const stillCrisis = Array.isArray(checkRows) ? checkRows[0]?.crisis === true : false;
+      if (!stillCrisis) {
+        console.log("Worker already responded, skipping reminder 1.");
+        return;
+      }
       await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open ReachOut app immediately.");
       console.log("Crisis alert 2 sent!");
     }, 30 * 1000);
 
     setTimeout(async function () {
+      const checkRows2 = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=crisis`);
+      const stillCrisis2 = Array.isArray(checkRows2) ? checkRows2[0]?.crisis === true : false;
+      if (!stillCrisis2) {
+        console.log("Worker already responded, skipping urgent alert and call.");
+        return;
+      }
       await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
       console.log("Crisis alert 3 sent!");
       try {
