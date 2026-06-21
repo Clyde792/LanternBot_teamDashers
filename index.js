@@ -168,6 +168,7 @@ async function generateSummary(chatId) {
       alreadyAlerting = false; // 24 hours passed, allow a fresh alert
     }
   }
+
   const transcript = msgs
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
@@ -436,79 +437,80 @@ app.post("/reply", async function (req, res) {
   });
 
   res.json({ ok: true });
+});
 
-  app.post("/worker-active", async function (req, res) {
-    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-    const { chatId, active } = req.body;
-    const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
-    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-      worker_active: active,
-      worker_active_until: workerActiveUntil,
-    });
+app.post("/worker-active", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { chatId, active } = req.body;
+  const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
+  await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+    worker_active: active,
+    worker_active_until: workerActiveUntil,
+  });
+  res.json({ ok: true });
+});
+
+app.post("/trigger-summary", async function (req, res) {
+  const { chatId } = req.body;
+  try {
+    await generateSummary(chatId);
     res.json({ ok: true });
-  });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
 
-  app.post("/trigger-summary", async function (req, res) {
-    const { chatId } = req.body;
-    try {
-      await generateSummary(chatId);
-      res.json({ ok: true });
-    } catch (e) {
-      res.json({ error: e.message });
+app.post("/analyze-social", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { chatId, instagram_username } = req.body;
+  if (!instagram_username) return res.status(400).json({ error: "Missing instagram_username" });
+
+  console.log("Analysing Instagram:", instagram_username);
+  const result = await analyzeInstagram(instagram_username);
+
+  if (!result.error && chatId) {
+    await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
+      instagram_username,
+      social_risk_score: result.overall_risk,
+      social_risk_summary: result.summary,
+      social_last_checked: new Date().toISOString(),
+    });
+  }
+
+  res.json(result);
+});
+
+app.post("/debug-instagram", async function (req, res) {
+  const { username } = req.body;
+  const raw = await fetch(
+    `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php`,
+    {
+      method: 'POST',
+      headers: {
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-host': 'instagram-scraper-stable-api.p.rapidapi.com',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `username_or_url=https://www.instagram.com/${encodeURIComponent(username)}/&amount=12`,
     }
-  });
+  );
+  const data = await raw.json();
+  res.json(data);
+});
 
-  app.post("/analyze-social", async function (req, res) {
-    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-    const { chatId, instagram_username } = req.body;
-    if (!instagram_username) return res.status(400).json({ error: "Missing instagram_username" });
+app.post("/translate", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: "Missing text" });
+  const translated = await callClaude(
+    "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
+    [{ role: "user", content: "Translate this text exactly: " + text }],
+    300
+  );
+  res.json({ translated });
+});
 
-    console.log("Analysing Instagram:", instagram_username);
-    const result = await analyzeInstagram(instagram_username);
+app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
 
-    if (!result.error && chatId) {
-      await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-        instagram_username,
-        social_risk_score: result.overall_risk,
-        social_risk_summary: result.summary,
-        social_last_checked: new Date().toISOString(),
-      });
-    }
-
-    res.json(result);
-  });
-
-  app.post("/debug-instagram", async function (req, res) {
-    const { username } = req.body;
-    const raw = await fetch(
-      `https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_posts.php`,
-      {
-        method: 'POST',
-        headers: {
-          'x-rapidapi-key': RAPIDAPI_KEY,
-          'x-rapidapi-host': 'instagram-scraper-stable-api.p.rapidapi.com',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `username_or_url=https://www.instagram.com/${encodeURIComponent(username)}/&amount=12`,
-      }
-    );
-    const data = await raw.json();
-    res.json(data);
-  });
-
-  app.post("/translate", async function (req, res) {
-    if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "Missing text" });
-    const translated = await callClaude(
-      "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
-      [{ role: "user", content: "Translate this text exactly: " + text }],
-      300
-    );
-    res.json({ translated });
-  });
-
-  app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
-
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, function () { console.log("Bot running on port " + PORT); });
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, function () { console.log("Bot running on port " + PORT); });
