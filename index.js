@@ -253,8 +253,12 @@ async function generateSummary(chatId) {
     const parsed = JSON.parse(clean);
 
     // Calculate distress trend by comparing mood scores
-    let distressTrend = 'stable';
-    if (typeof previousMoodScore === 'number' && typeof parsed.mood_score === 'number') {
+    const isCriticalNow = parsed.crisis || parsed.risk_level === 'high';
+
+    let distressTrend;
+    if (isCriticalNow) {
+      distressTrend = 'critical';
+    } else if (typeof previousMoodScore === 'number' && typeof parsed.mood_score === 'number') {
       const diff = parsed.mood_score - previousMoodScore;
       if (diff >= 10) distressTrend = 'improving';
       else if (diff <= -10) distressTrend = 'worsening';
