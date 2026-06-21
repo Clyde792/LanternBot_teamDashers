@@ -226,9 +226,10 @@ async function generateSummary(chatId) {
   if (msgs.length < 2) return;
 
   // Check crisis status FIRST before doing anything else
-  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis,crisis_alerted_at`);
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis,crisis_alerted_at,mood_score`);
   const convData = Array.isArray(convRows) ? convRows[0] : null;
   const username = convData?.username || 'Unknown';
+  const previousMoodScore = convData?.mood_score;
 
   let alreadyAlerting = convData?.crisis === true;
   if (alreadyAlerting && convData?.crisis_alerted_at) {
@@ -251,6 +252,17 @@ async function generateSummary(chatId) {
     const clean = summary.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
+    // Calculate distress trend by comparing mood scores
+    let distressTrend = 'stable';
+    if (typeof previousMoodScore === 'number' && typeof parsed.mood_score === 'number') {
+      const diff = parsed.mood_score - previousMoodScore;
+      if (diff >= 10) distressTrend = 'improving';
+      else if (diff <= -10) distressTrend = 'worsening';
+      else distressTrend = 'stable';
+    } else {
+      distressTrend = 'new';
+    }
+
     const updatePayload = {
       risk_level: parsed.risk_level,
       summary: Array.isArray(parsed.summary) ? parsed.summary.join('|||') : parsed.summary,
@@ -262,6 +274,8 @@ async function generateSummary(chatId) {
       trust_level: parsed.trust_level,
       engagement_level: parsed.engagement_level,
       mood_score: parsed.mood_score,
+      distress_trend: distressTrend,
+      previous_mood_score: previousMoodScore ?? null,
     };
 
     if (parsed.instagram_username) {
