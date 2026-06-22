@@ -182,7 +182,7 @@ async function checkCrisisOnly(chatId, username, latestMessage) {
       crisis_alerted_at: new Date().toISOString(),
     });
 
-    await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - ReachOut\n\nYouth: @" + username + "\n\nMessage: \"" + latestMessage + "\"\n\nOpen ReachOut app to respond immediately.");
+    await sendTelegram(WORKER_TELEGRAM_ID, "CRISIS ALERT - Lantern\n\nYouth: @" + username + "\n\nMessage: \"" + latestMessage + "\"\n\nOpen Lantern app to respond immediately.");
     console.log("Crisis alert 1 sent! (lightweight check)");
 
     setTimeout(async function () {
@@ -192,7 +192,7 @@ async function checkCrisisOnly(chatId, username, latestMessage) {
         console.log("Worker already responded, skipping reminder 1.");
         return;
       }
-      await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open ReachOut app immediately.");
+      await sendTelegram(WORKER_TELEGRAM_ID, "REMINDER - Youth still waiting\n\n@" + username + " has not been responded to yet.\n\nPlease open Lantern app immediately.");
       console.log("Crisis alert 2 sent!");
     }, 30 * 1000);
 
@@ -203,7 +203,7 @@ async function checkCrisisOnly(chatId, username, latestMessage) {
         console.log("Worker already responded, skipping urgent alert and call.");
         return;
       }
-      await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open ReachOut NOW.");
+      await sendTelegram(WORKER_TELEGRAM_ID, "URGENT - Immediate response needed\n\n@" + username + " has been waiting 1 minute with no response.\n\nThis requires immediate attention. Please open Lantern NOW.");
       console.log("Crisis alert 3 sent!");
       try {
         const client = twilio(TWILIO_SID, TWILIO_TOKEN);
@@ -418,7 +418,7 @@ app.post("/webhook", async function (req, res) {
     messages.push({ role: "user", content: text });
   }
 
-  const system = `You are Buddy, ReachOut's after-hours chat companion for Singapore Children's Society (SCS). You are NOT a counsellor, therapist, or mental health professional. You are a friendly, caring presence that keeps youths company after hours and passes everything to their real worker.
+  const system = `You are Buddy, Lantern's after-hours chat companion for Singapore Children's Society (SCS). You are NOT a counsellor, therapist, or mental health professional. You are a friendly, caring presence that keeps youths company after hours and passes everything to their real worker.
  
 YOUR ONLY JOBS:
 1. Be a genuine, warm friend who listens
@@ -582,7 +582,7 @@ app.post("/translate", async function (req, res) {
   res.json({ translated });
 });
 
-app.get("/", function (req, res) { res.json({ status: "ReachOut bot running" }); });
+app.get("/", function (req, res) { res.json({ status: "Lantern bot running" }); });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function () { console.log("Bot running on port " + PORT); });
