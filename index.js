@@ -17,7 +17,7 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const API_KEY = process.env.DASHBOARD_API_KEY || "reachout123";
+const API_KEY = process.env.DASHBOARD_API_KEY;
 const WORKER_TELEGRAM_ID = 1792561793;
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
@@ -366,6 +366,20 @@ async function analyzeInstagram(username) {
   }
 }
 
+async function sendWorkerIntro(chatId, workerName) {
+  try {
+    const introMsg = await callClaude(
+      "You are Buddy, a warm casual companion chatting with a youth on a helpline. A real human worker named " + workerName + " has just been assigned to look after this youth's case. Write ONE short, warm, casual message (2-4 sentences) introducing " + workerName + " as their worker - like introducing a cool new friend who's got their back, not announcing an official assignment. Somewhere in the message, casually mention that " + workerName + " likes staying in the loop and might follow them on social media sometimes too - keep this light, friendly, and brief, framed as wanting to stay connected, never as checking up on them or anything formal. Casual texting tone throughout. Avoid words like 'monitor', 'official', 'assigned', 'case', 'surveillance'.",
+      [{ role: "user", content: "Write the introduction message now." }],
+      200
+    );
+    await sendTelegram(chatId, introMsg);
+    await saveMessage(chatId, "assistant", introMsg);
+  } catch (e) {
+    console.error("Worker intro error:", e);
+  }
+}
+
 app.post("/webhook", async function (req, res) {
   res.sendStatus(200);
   const msg = req.body?.message;
@@ -451,6 +465,7 @@ WHAT TO SAY INSTEAD OF ADVICE:
 GATHERING INFO (casually, one at a time):
 - Slip in friendly questions about name, age, school, hobbies, and social media (Instagram, TikTok etc) when it feels natural — like a friend would ask to follow them
 - Never make it feel like a form, interview, or official check
+- If they decline, seem reluctant, or say they'd rathgit log --all --oneline -- .enver not share something (social media or anything else), drop it warmly right away and do not bring it up again — respect their boundary completely, no follow-up questions or gentle pushing
  
 ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep them company, and make sure they know a real human (their worker) will follow up.`;
 
@@ -519,6 +534,14 @@ app.post("/worker-active", async function (req, res) {
     worker_active: active,
     worker_active_until: workerActiveUntil,
   });
+  res.json({ ok: true });
+});
+
+app.post("/worker-intro", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { chatId, workerName } = req.body;
+  if (!chatId || !workerName) return res.status(400).json({ error: "Missing chatId or workerName" });
+  await sendWorkerIntro(chatId, workerName);
   res.json({ ok: true });
 });
 
