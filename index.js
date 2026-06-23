@@ -39,14 +39,16 @@ try {
   console.error("DeepL init error:", e);
 }
 
-// DeepL only supports these of our languages — everything else (Burmese,
-// Tamil, Tagalog) falls back to Claude. Note DeepL has no Malay, so we use
-// Indonesian (ID) as the closest available.
+// DeepL now covers all of our languages directly (verified via
+// getTargetLanguages on the live key). Anything not listed falls back to Claude.
 const DEEPL_TARGET = {
   English: "EN-US",
   Mandarin: "ZH",
   Chinese: "ZH",
-  Malay: "ID",
+  Malay: "MS",
+  Tamil: "TA",
+  Burmese: "MY",
+  Tagalog: "TL",
 };
 
 async function supabase(method, path, body) {
@@ -165,13 +167,27 @@ async function detectAndTranslate(text, targetLanguage) {
   if (deeplClient && code) {
     try {
       const result = await deeplClient.translateText(text, null, code);
-      return result.text;
+      let out = result.text;
+      // Polish English output so it reads naturally for the worker. DeepL is
+      // accurate but occasionally literal; Claude only refines the phrasing
+      // here (it does not re-translate). Falls back to raw DeepL on error.
+      if (targetLanguage === "English") {
+        try {
+          out = await callClaude(
+            "The text below is a machine translation into English. Rewrite it to sound natural and conversational while keeping the meaning EXACTLY the same. Return ONLY the improved English — no notes, no commentary. If it already reads naturally, return it unchanged.",
+            [{ role: "user", content: out }],
+            200
+          );
+        } catch (e) {
+          console.error("Claude polish error, using raw DeepL text:", e?.message || e);
+        }
+      }
+      return out;
     } catch (e) {
       console.error("DeepL translation error, falling back to Claude:", e?.message || e);
     }
   }
-  // Fallback to Claude: no DeepL key, a language DeepL doesn't support
-  // (Burmese / Tamil / Tagalog), or a DeepL error.
+  // Fallback to Claude (no DeepL key, or a DeepL error).
   const result = await callClaude(
     "You are a translation engine. Translate the given text to " + targetLanguage + " word-for-word. Return ONLY the translated text, nothing else — no empathy, commentary, or chatbot reply. If it is already in " + targetLanguage + ", return it unchanged.",
     [{ role: "user", content: text }],
