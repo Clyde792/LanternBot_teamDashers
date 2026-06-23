@@ -1,6 +1,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import twilio from "twilio";
+import * as deeplNode from "deepl-node";
 
 const app = express();
 app.use(express.json());
@@ -24,6 +25,29 @@ const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM = process.env.TWILIO_PHONE_NUMBER;
 const WORKER_PHONE = process.env.WORKER_PHONE_NUMBER;
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
+
+// DeepL translator — used for the languages it supports (better accuracy),
+// with a graceful fall back to Claude otherwise. Init is guarded so a missing
+// key or import quirk never crashes the bot.
+let deeplClient = null;
+try {
+  const TranslatorClass = deeplNode.Translator || (deeplNode.default && deeplNode.default.Translator);
+  if (process.env.DEEPL_API_KEY && TranslatorClass) {
+    deeplClient = new TranslatorClass(process.env.DEEPL_API_KEY);
+  }
+} catch (e) {
+  console.error("DeepL init error:", e);
+}
+
+// DeepL only supports these of our languages — everything else (Burmese,
+// Tamil, Tagalog) falls back to Claude. Note DeepL has no Malay, so we use
+// Indonesian (ID) as the closest available.
+const DEEPL_TARGET = {
+  English: "EN-US",
+  Mandarin: "ZH",
+  Chinese: "ZH",
+  Malay: "ID",
+};
 
 async function supabase(method, path, body) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -137,8 +161,19 @@ async function callClaude(system, messages, maxTokens) {
 }
 
 async function detectAndTranslate(text, targetLanguage) {
+  const code = DEEPL_TARGET[targetLanguage];
+  if (deeplClient && code) {
+    try {
+      const result = await deeplClient.translateText(text, null, code);
+      return result.text;
+    } catch (e) {
+      console.error("DeepL translation error, falling back to Claude:", e?.message || e);
+    }
+  }
+  // Fallback to Claude: no DeepL key, a language DeepL doesn't support
+  // (Burmese / Tamil / Tagalog), or a DeepL error.
   const result = await callClaude(
-    "You are a translator. Translate the given text to " + targetLanguage + ". Return ONLY the translated text, nothing else. If the text is already in " + targetLanguage + ", return it as is.",
+    "You are a translation engine. Translate the given text to " + targetLanguage + " word-for-word. Return ONLY the translated text, nothing else — no empathy, commentary, or chatbot reply. If it is already in " + targetLanguage + ", return it unchanged.",
     [{ role: "user", content: text }],
     500
   );
@@ -630,11 +665,9 @@ app.post("/translate", async function (req, res) {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: "Missing text" });
-  const translated = await callClaude(
-    "You are a translation engine. Your ONLY job is to translate text to English word-for-word. Do NOT add any empathy, commentary, or interpretation. Do NOT respond as a chatbot. Return ONLY the translated text and nothing else. If the text is already in English, return it unchanged.",
-    [{ role: "user", content: "Translate this text exactly: " + text }],
-    300
-  );
+  // Youth's message → English for the worker. Routes through DeepL (great for
+  // Chinese), falling back to Claude for languages DeepL can't handle.
+  const translated = await detectAndTranslate(text, "English");
   res.json({ translated });
 });
 

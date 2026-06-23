@@ -9,22 +9,37 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#1A1A1A',
+    background: '#FDFCFA',
+    backgroundElement: '#F4F1EC',
+    backgroundSelected: '#EAE4D9',
+    textSecondary: '#6B6357',
+    tint: '#B45309',
+    tintSoft: '#FCEFD7',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#F5F3EF',
+    background: '#0E0D0B',
+    backgroundElement: '#1C1A16',
+    backgroundSelected: '#2A271F',
+    textSecondary: '#A9A293',
+    tint: '#F6B445',
+    tintSoft: '#2A2113',
   },
 } as const;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
+
+/**
+ * Lantern brand palette — the warm "light in the dark" glow used by the
+ * lantern mark and accent surfaces. Kept separate from the semantic
+ * theme colors above so the brand stays consistent across light/dark.
+ */
+export const Brand = {
+  glow: '#F59E0B',
+  glowDeep: '#D97706',
+  flame: '#FFF6E2',
+} as const;
 
 export const Fonts = Platform.select({
   ios: {

@@ -10,11 +10,14 @@ export type ThemedTextProps = TextProps & {
 
 export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
   const theme = useTheme();
+  const isLink = type === 'link' || type === 'linkPrimary';
+  const colorKey = themeColor ?? (isLink ? 'tint' : 'text');
 
   return (
     <Text
+      maxFontSizeMultiplier={1.4}
       style={[
-        { color: theme[themeColor ?? 'text'] },
+        { color: theme[colorKey] },
         type === 'default' && styles.default,
         type === 'title' && styles.title,
         type === 'small' && styles.small,
@@ -34,40 +37,43 @@ const styles = StyleSheet.create({
   small: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: 500,
+    fontWeight: '500',
   },
   smallBold: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: 700,
+    fontWeight: '700',
   },
   default: {
     fontSize: 16,
     lineHeight: 24,
-    fontWeight: 500,
+    fontWeight: '500',
   },
   title: {
     fontSize: 48,
-    fontWeight: 600,
+    fontWeight: '700',
     lineHeight: 52,
+    letterSpacing: -1,
   },
   subtitle: {
-    fontSize: 32,
-    lineHeight: 44,
-    fontWeight: 600,
+    fontSize: 28,
+    lineHeight: 36,
+    fontWeight: '600',
+    letterSpacing: -0.5,
   },
   link: {
     lineHeight: 30,
     fontSize: 14,
+    fontWeight: '600',
   },
   linkPrimary: {
     lineHeight: 30,
     fontSize: 14,
-    color: '#3c87f7',
+    fontWeight: '600',
   },
   code: {
     fontFamily: Fonts.mono,
-    fontWeight: Platform.select({ android: 700 }) ?? 500,
+    fontWeight: Platform.select({ android: '700' }) ?? '500',
     fontSize: 12,
   },
 });
