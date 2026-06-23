@@ -69,6 +69,36 @@ async function getMessages(chatId) {
   return Array.isArray(rows) ? rows : [];
 }
 
+// Push a notification to the worker assigned to this conversation, so they know
+// their youth just messaged the bot. Best-effort and non-blocking — never throws
+// into the webhook flow.
+async function notifyAssignedWorker(chatId, username, text) {
+  try {
+    const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=assigned_worker,display_name`);
+    const conv = Array.isArray(convRows) ? convRows[0] : null;
+    if (!conv?.assigned_worker) return;
+
+    const profRows = await supabase("GET", `worker_profiles?email=eq.${encodeURIComponent(conv.assigned_worker)}&select=expo_push_token`);
+    const token = Array.isArray(profRows) ? profRows[0]?.expo_push_token : null;
+    if (!token) return;
+
+    const name = conv.display_name || username || "a youth";
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        to: token,
+        title: `New message from ${name}`,
+        body: text.length > 120 ? text.slice(0, 120) + "…" : text,
+        sound: "default",
+        data: { chatId: String(chatId) },
+      }),
+    });
+  } catch (e) {
+    console.error("notifyAssignedWorker error:", e);
+  }
+}
+
 async function isWorkerActive(chatId) {
   const rows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=worker_active,worker_active_until`);
   if (!Array.isArray(rows) || rows.length === 0) return false;
@@ -392,6 +422,9 @@ app.post("/webhook", async function (req, res) {
   const displayName = msg.from?.first_name || username;
   await upsertConversation(chatId, username, displayName);
   await saveMessage(chatId, "user", text);
+
+  // Notify the assigned worker (push) whenever their youth messages the bot.
+  notifyAssignedWorker(chatId, username, text).catch(console.error);
 
   // Detect and save youth's language
   const detectedLang = await detectLanguage(text);
