@@ -307,7 +307,7 @@ async function generateSummary(chatId) {
   if (msgs.length < 2) return;
 
   // Check crisis status FIRST before doing anything else
-  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis,crisis_alerted_at,mood_score`);
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username,crisis,crisis_alerted_at,mood_score,mbti`);
   const convData = Array.isArray(convRows) ? convRows[0] : null;
   const username = convData?.username || 'Unknown';
   const previousMoodScore = convData?.mood_score;
@@ -324,7 +324,7 @@ async function generateSummary(chatId) {
     .map(function (m) { return (m.role === "user" ? "Youth" : "Bot") + ": " + m.content; })
     .join("\n");
 
-  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": [\"short action point 1 max 8 words\", \"short action point 2 max 8 words\", \"short action point 3 max 8 words\"], \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"instagram_username\": \"instagram username if the youth mentioned it during the conversation, otherwise null\", \"other_social_media\": \"any other social media platform and username mentioned, e.g. TikTok or Snapchat handle, otherwise null\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation}";
+  const summaryPrompt = "You are a clinical summariser for youth social workers at Singapore Children's Society.\nRead this conversation and reply ONLY with valid JSON - no markdown, no explanation:\n{\"risk_level\": \"low or medium or high\", \"summary\": [\"precise bullet point 1 about what the youth shared\", \"precise bullet point 2 about emotional state or concerns\", \"precise bullet point 3 about key events or triggers\", \"precise bullet point 4 about any risks or protective factors\"], \"suggested_action\": [\"short action point 1 max 8 words\", \"short action point 2 max 8 words\", \"short action point 3 max 8 words\"], \"crisis\": true or false, \"age\": \"age or null\", \"school\": \"school or null\", \"likes\": \"likes or null\", \"dislikes\": \"dislikes or null\", \"snapshot\": \"1 sentence snapshot\", \"instagram_username\": \"instagram username if the youth mentioned it during the conversation, otherwise null\", \"other_social_media\": \"any other social media platform and username mentioned, e.g. TikTok or Snapchat handle, otherwise null\", \"trust_level\": 0 to 100 integer based on how openly the youth is sharing, \"engagement_level\": 0 to 100 integer based on how actively the youth is participating, \"mood_score\": 0 to 100 integer where 0 is extremely sad or distressed and 100 is very happy and positive based on overall tone of conversation, \"mbti\": \"the youth's likely 4-letter MBTI type (e.g. ENFP, INTJ) inferred from their communication style, values, and how they process feelings — or null if there isn't enough to tell yet\", \"mbti_confidence\": 0 to 1 decimal for how confident you are in the mbti}";
 
   const summary = await callClaude(summaryPrompt, [{ role: "user", content: transcript }], 1000);
 
@@ -362,6 +362,18 @@ async function generateSummary(chatId) {
       distress_trend: distressTrend,
       previous_mood_score: previousMoodScore ?? null,
     };
+
+    // Track how many messages we've seen, and lock in an MBTI read once there's
+    // enough conversation (and we haven't already saved one). Stays stable after.
+    updatePayload.message_count = msgs.length;
+    const MBTI_MIN_MESSAGES = 12;
+    if (!convData?.mbti && msgs.length >= MBTI_MIN_MESSAGES &&
+        typeof parsed.mbti === 'string' && /^[EI][NS][TF][JP]$/i.test(parsed.mbti.trim())) {
+      updatePayload.mbti = parsed.mbti.trim().toUpperCase();
+      if (typeof parsed.mbti_confidence === 'number') {
+        updatePayload.mbti_confidence = parsed.mbti_confidence;
+      }
+    }
 
     if (parsed.instagram_username) {
       updatePayload.instagram_username = parsed.instagram_username;
