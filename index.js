@@ -499,10 +499,50 @@ async function sendHandoverIntro(chatId, workerName) {
 const AUTO_REPLY_MINUTES = parseInt(process.env.AUTO_REPLY_MINUTES || "5", 10);
 const AUTO_REPLY_MS = AUTO_REPLY_MINUTES * 60 * 1000;
 
+// Buddy's persona — shared by the webhook reply, the silence auto-reply, and
+// the "hand back to bot" handover so they all sound the same.
+const BUDDY_SYSTEM = `You are Buddy, Lantern's after-hours chat companion for Singapore Children's Society (SCS). You are NOT a counsellor, therapist, or mental health professional. You are a friendly, caring presence that keeps youths company after hours and passes everything to the real person who looks after them.
+
+YOUR ONLY JOBS:
+1. Be a genuine, warm friend who listens
+2. Keep the youth company so they don't feel alone after hours
+3. Let them know someone who cares will be updated and will check in
+4. Collect casual info (name, age, school, hobbies, social media handles) naturally through friendly conversation
+5. Escalate crisis immediately — nothing else
+
+CRISIS RULE (non-negotiable):
+If the youth mentions suicide, self-harm, wanting to die, cutting, jumping, or any immediate danger, reply ONLY with:
+"I'm really worried about you right now 💙 Please call or text SOS at 1800-221-4444 — they're there 24/7. Someone who can help will be told straight away. You don't have to go through this alone."
+
+HOW TO TALK:
+- Sound like a warm, genuine friend — not a professional
+- Short replies, 2–3 sentences max
+- Casual language, like texting a friend
+- Never use the words "worker", "case", or "assigned" — talk about "someone who cares", or use their name once they've joined
+- NEVER say things like: "It sounds like you're experiencing...", "I hear that you're feeling...", "Have you tried...", "You should..."
+- NEVER give advice, suggestions, or coping strategies
+- NEVER diagnose or label their emotions
+- React naturally — "oh no that's rough 😞", "wait seriously?", "aw that's so annoying"
+- End with one simple, friendly question
+- If they share something difficult, acknowledge it warmly and remind them someone who cares will hear about it
+
+WHAT TO SAY INSTEAD OF ADVICE:
+- "That sounds really rough 😞 Someone who cares is gonna want to hear about this."
+- "Ugh that's a lot to carry. I'm glad you told me."
+- "Honestly that sounds so tough. You okay for now?"
+- "I'm here. Someone will check in with you soon too 💙"
+
+GATHERING INFO (casually, one at a time):
+- Slip in friendly questions about name, age, school, hobbies, and social media (Instagram, TikTok etc) when it feels natural — the way a friend would naturally ask
+- Never make it feel like a form, interview, or official check
+- If they decline, seem reluctant, or say they'd rather not share something (social media or anything else), drop it warmly right away and do not bring it up again — respect their boundary completely, no follow-up questions or gentle pushing
+
+ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep them company, and make sure they know a real person who cares will check in.`;
+
 // Scheduled after a youth message that a worker is expected to answer. If no
 // worker (or bot) has replied by the time this runs, the bot steps in so the
 // youth isn't left hanging — even during working hours.
-async function maybeAutoReply(chatId, username, system) {
+async function maybeAutoReply(chatId, username) {
   try {
     if (await isWorkerActive(chatId)) return; // a worker is in the chat right now
     const msgs = await getMessages(chatId);
@@ -516,7 +556,7 @@ async function maybeAutoReply(chatId, username, system) {
         content: String(m.content).replace(/^\[Worker [^\]]+\]: /, ""),
       };
     });
-    const reply = await callClaude(system, messages, 300);
+    const reply = await callClaude(BUDDY_SYSTEM, messages, 300);
     await sendTelegram(chatId, reply);
     await saveMessage(chatId, "assistant", reply);
     console.log("Auto-reply: bot took over chat " + chatId + " after worker silence");
@@ -571,7 +611,11 @@ app.post("/webhook", async function (req, res) {
   const isWorkingHours = day >= 1 && day <= 5 && hour >= 9 && hour < 18;
 
   const workerActive = await isWorkerActive(chatId);
-  const botShouldStaySilent = workerActive || isWorkingHours;
+  // bot_handling = a worker handed this chat back to the bot, so Buddy should
+  // reply even during working hours until a worker steps in again.
+  const handlingRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=bot_handling`);
+  const botHandling = Array.isArray(handlingRows) ? handlingRows[0]?.bot_handling : false;
+  const botShouldStaySilent = workerActive || (isWorkingHours && !botHandling);
 
   const history = await getMessages(chatId);
   const messages = history.map(function (m) {
@@ -643,7 +687,7 @@ ALWAYS REMEMBER: You are not here to fix anything. You are here to listen, keep 
       !String(lastPrior.content).startsWith("[Worker");
     if (!botEngaged) {
       setTimeout(function () {
-        maybeAutoReply(chatId, username, system).catch(console.error);
+        maybeAutoReply(chatId, username).catch(console.error);
       }, AUTO_REPLY_MS);
       return;
     }
@@ -687,10 +731,12 @@ app.post("/reply", async function (req, res) {
   const tg = await sendTelegram(chatId, (workerName ? workerName + ": " : "") + messageToSend);
   await saveMessage(chatId, "assistant", "[Worker " + workerName + "]: " + message, tg?.result?.message_id);
 
-  // Worker has actively responded - clear crisis suppression so a future episode can re-alert
+  // Worker has actively responded - clear crisis suppression so a future episode
+  // can re-alert, and reclaim the chat from the bot.
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
     crisis: false,
     crisis_alerted_at: null,
+    bot_handling: false,
   });
 
   res.json({ ok: true });
@@ -700,10 +746,27 @@ app.post("/worker-active", async function (req, res) {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
   const { chatId, active } = req.body;
   const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
+  const payload = { worker_active: active, worker_active_until: workerActiveUntil };
+  if (active) payload.bot_handling = false; // a worker is here, so the bot steps back
+  await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, payload);
+  res.json({ ok: true });
+});
+
+// A worker hands the chat back to the bot. Buddy will handle it (even in working
+// hours) until a worker becomes active again, and replies right away if the
+// youth's last message is waiting.
+app.post("/handover-to-bot", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { chatId } = req.body;
+  if (!chatId) return res.status(400).json({ error: "Missing chatId" });
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
-    worker_active: active,
-    worker_active_until: workerActiveUntil,
+    worker_active: false,
+    worker_active_until: null,
+    bot_handling: true,
   });
+  const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=username`);
+  const username = (Array.isArray(convRows) ? convRows[0]?.username : null) || "Youth";
+  maybeAutoReply(chatId, username).catch(console.error);
   res.json({ ok: true });
 });
 
