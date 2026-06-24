@@ -473,6 +473,23 @@ async function sendWorkerIntro(chatId, workerName) {
   }
 }
 
+// Sent to the youth when a case is handed over to a new person, so they know
+// someone else who cares is now there for them too (without sounding like a
+// cold transfer or using the word "worker").
+async function sendHandoverIntro(chatId, workerName) {
+  try {
+    const introMsg = await callClaude(
+      "You are Buddy, a warm casual companion chatting with a youth on a helpline. Someone new who cares, named " + workerName + ", is now also stepping in to be there for this youth, alongside whoever was helping them before. Write ONE short, warm, casual message (2-4 sentences) gently letting the youth know that " + workerName + " has also come to be here for them now and is looking forward to keeping in touch — like a friend introducing another friend who's got their back. Reassure them they're still cared for and not being passed off or forgotten. Casual texting tone. Do NOT use the word 'worker'. Never mention social media, following them, or checking up on them. Avoid words like 'monitor', 'official', 'assigned', 'case', 'transfer', 'handover', 'surveillance', 'follow'.",
+      [{ role: "user", content: "Write the message now." }],
+      200
+    );
+    await sendTelegram(chatId, introMsg);
+    await saveMessage(chatId, "assistant", introMsg);
+  } catch (e) {
+    console.error("Handover intro error:", e);
+  }
+}
+
 // If a worker is expected to handle a chat (working hours, or a worker is
 // active) but doesn't reply within this window, the bot takes over so the youth
 // is never left waiting. Override with AUTO_REPLY_MINUTES env var.
@@ -692,6 +709,14 @@ app.post("/worker-intro", async function (req, res) {
   const { chatId, workerName } = req.body;
   if (!chatId || !workerName) return res.status(400).json({ error: "Missing chatId or workerName" });
   await sendWorkerIntro(chatId, workerName);
+  res.json({ ok: true });
+});
+
+app.post("/handover-intro", async function (req, res) {
+  if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
+  const { chatId, workerName } = req.body;
+  if (!chatId || !workerName) return res.status(400).json({ error: "Missing chatId or workerName" });
+  await sendHandoverIntro(chatId, workerName);
   res.json({ ok: true });
 });
 
