@@ -730,7 +730,10 @@ app.post("/reply", async function (req, res) {
     messageToSend = await detectAndTranslate(message, preferredLang);
   }
 
-  const tg = await sendTelegram(chatId, (workerName ? workerName + ": " : "") + messageToSend);
+  // Send just the worker's message to the youth — no name/email prefix. The
+  // "[Worker ...]" marker is kept only in the saved record so the app can tell
+  // worker messages apart (it's stripped before display, never shown to youth).
+  const tg = await sendTelegram(chatId, messageToSend);
   await saveMessage(chatId, "assistant", "[Worker " + workerName + "]: " + message, tg?.result?.message_id);
 
   // Worker has actively responded - clear crisis suppression so a future episode
@@ -815,7 +818,6 @@ app.post("/send-photo", async function (req, res) {
       body: JSON.stringify({
         chat_id: chatId,
         photo: imageUrl,
-        caption: workerName ? workerName + " sent a photo" : undefined,
       }),
     });
     const data = await tg.json().catch(function () { return null; });
