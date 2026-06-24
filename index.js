@@ -213,14 +213,16 @@ async function detectLanguage(text) {
 
 async function checkAndAskSocialMedia(chatId, username) {
   try {
-    const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=last_message_time,social_media_asked,instagram_username`);
+    const convRows = await supabase("GET", `conversations?chat_id=eq.${chatId}&select=last_message_time,social_media_asked,instagram_username,crisis,risk_level`);
     const conv = Array.isArray(convRows) ? convRows[0] : null;
     if (!conv) return;
     if (conv.social_media_asked || conv.instagram_username) return;
+    // Never ask during a critical situation — an active crisis or a high-risk case.
+    if (conv.crisis || conv.risk_level === "high") return;
 
     const lastMsgTime = new Date(conv.last_message_time).getTime();
     const now = Date.now();
-    // Only ask if no new message has come in during the last 60 seconds
+    // Only ask if the youth has gone quiet for ~1 minute (no new message).
     if (now - lastMsgTime < 58000) return;
 
     await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, {
@@ -228,8 +230,8 @@ async function checkAndAskSocialMedia(chatId, username) {
     });
 
     const followUp = await callClaude(
-      "You are Buddy, a warm friendly companion chatting with a youth. Casually and naturally ask if they have Instagram, TikTok, or any social media they're active on, the way a friend would naturally ask to stay in touch. Keep it short, 1-2 sentences, casual tone, no pressure to answer. Do not mention monitoring, checking, following, or anything official.",
-      [{ role: "user", content: "Ask them casually about their social media." }],
+      "You are Buddy, a warm friendly companion chatting with a youth. In ONE short, casual sentence, gently ask if they're on Instagram so a caring person can stay in touch — the way a friend would ask. Make it clearly optional and pressure-free (totally fine if they'd rather not). If they happen to use a different app instead, that's okay too, but lead with Instagram. Do NOT use the word 'worker'. Do not mention monitoring, checking up, following, surveillance, or anything official.",
+      [{ role: "user", content: "Ask them casually about Instagram now." }],
       100
     );
     await sendTelegram(chatId, followUp);
