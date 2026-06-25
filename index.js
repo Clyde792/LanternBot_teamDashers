@@ -744,6 +744,8 @@ app.post("/reply", async function (req, res) {
     crisis: false,
     crisis_alerted_at: null,
     bot_handling: false,
+    worker_active: true,
+    worker_active_until: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
 
   res.json({ ok: true });
@@ -751,10 +753,12 @@ app.post("/reply", async function (req, res) {
 
 app.post("/worker-active", async function (req, res) {
   if (req.headers["x-api-key"] !== API_KEY) return res.status(401).json({ error: "Unauthorised" });
-  const { chatId, active } = req.body;
+  const { chatId, active, reclaim } = req.body;
   const workerActiveUntil = active ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null;
   const payload = { worker_active: active, worker_active_until: workerActiveUntil };
-  if (active) payload.bot_handling = false; // a worker is here, so the bot steps back
+  // Only an EXPLICIT reclaim (Take Over, or sending a message) pulls the chat
+  // back from the bot. Merely opening/viewing a chat must NOT reclaim it.
+  if (reclaim) payload.bot_handling = false;
   await supabase("PATCH", `conversations?chat_id=eq.${chatId}`, payload);
   res.json({ ok: true });
 });
