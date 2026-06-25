@@ -17,7 +17,9 @@ app.use((req, res, next) => {
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+// Prefer a server-only service key (bypasses RLS) so the bot keeps full access
+// once Row-Level Security is enabled. Falls back to the existing key until set.
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
 const API_KEY = process.env.DASHBOARD_API_KEY;
 const WORKER_TELEGRAM_ID = 1792561793;
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
